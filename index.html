@@ -6,6 +6,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Templom Térkép</title>
 
+    <script>
+        // A téma korai beállítása, hogy ne villanjon fel a rossz háttér betöltéskor
+        (function () {
+            try {
+                const saved = localStorage.getItem('theme');
+                const theme = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+                document.documentElement.setAttribute('data-bs-theme', theme);
+            } catch (e) { /* localStorage nem elérhető – marad az alapértelmezett */ }
+        })();
+    </script>
+
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -19,6 +30,24 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html-to-image/1.11.11/html-to-image.js"></script>
 
     <style>
+        /* Világos mód alapértékei */
+        :root {
+            --tt-heading: #2c3e50;
+            --tt-box-bg: rgba(255, 255, 255, 0.9);
+            --tt-box-text: #333333;
+            --tt-box-heading: #777777;
+            --tt-box-border: #dddddd;
+        }
+
+        /* Sötét mód felülírások */
+        [data-bs-theme="dark"] {
+            --tt-heading: #e9ecef;
+            --tt-box-bg: rgba(33, 37, 41, 0.92);
+            --tt-box-text: #e9ecef;
+            --tt-box-heading: #adb5bd;
+            --tt-box-border: #495057;
+        }
+
         #map {
             height: 75vh;
             width: 100%;
@@ -50,8 +79,9 @@
 
         .mass-schedule-container {
             position: absolute;
-            background-color: rgba(255, 255, 255, 0.9);
-            border: 1px solid #ddd;
+            background-color: var(--tt-box-bg);
+            color: var(--tt-box-text);
+            border: 1px solid var(--tt-box-border);
             border-radius: 4px;
             padding: 5px;
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
@@ -67,26 +97,26 @@
         }
 
         .church-label {
-            background-color: rgba(255, 255, 255, 0.8);
+            background-color: var(--tt-box-bg);
             padding: 2px 5px;
             border-radius: 3px;
             font-size: 0.8em;
-            color: #333;
+            color: var(--tt-box-text);
             white-space: nowrap;
         }
 
         .info {
             padding: 6px 8px;
             font: 14px/16px Arial, Helvetica, sans-serif;
-            background: white;
-            background: rgba(255, 255, 255, 0.8);
+            background: var(--tt-box-bg);
+            color: var(--tt-box-text);
             box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
             border-radius: 5px;
         }
 
         .info h4 {
             margin: 0 0 5px;
-            color: #777;
+            color: var(--tt-box-heading);
         }
 
         .legend {
@@ -98,7 +128,7 @@
         h1 {
             font-weight: 700;
             letter-spacing: -0.5px;
-            color: #2c3e50;
+            color: var(--tt-heading);
         }
 
         .card {
@@ -128,7 +158,7 @@
         }
 
         #templomSzam {
-            color: #2c3e50;
+            color: var(--tt-heading);
             font-weight: 600;
             font-size: 0.9em;
         }
@@ -141,12 +171,43 @@
             line-height: 30px;
             cursor: pointer;
         }
+
+        /* Sötét módban a Leaflet vezérlők és a térkép feliratai is sötétek legyenek */
+        [data-bs-theme="dark"] .leaflet-bar a,
+        [data-bs-theme="dark"] .leaflet-control-layers,
+        [data-bs-theme="dark"] .leaflet-control-scale-line {
+            background-color: #2b3035;
+            color: #e9ecef;
+            border-color: #495057;
+        }
+
+        [data-bs-theme="dark"] .leaflet-bar a {
+            border-bottom-color: #495057;
+        }
+
+        [data-bs-theme="dark"] .leaflet-control-scale-line {
+            border-color: #adb5bd;
+        }
+
+        [data-bs-theme="dark"] .leaflet-control-attribution {
+            background: rgba(33, 37, 41, 0.85) !important;
+            color: #ced4da;
+        }
+
+        [data-bs-theme="dark"] .leaflet-control-attribution a {
+            color: #6ea8fe;
+        }
     </style>
 </head>
 
 <body>
     <div class="container">
-        <h1 class="text-center mb-4">Templom Térkép készítő</h1>
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <span style="width: 44px;"></span>
+            <h1 class="text-center m-0 flex-grow-1">Templom Térkép készítő</h1>
+            <button id="theme-toggle" class="btn btn-outline-secondary" type="button"
+                title="Világos/sötét mód váltása" aria-label="Világos/sötét mód váltása">🌙</button>
+        </div>
         <div class="alert alert-info alert-dismissible fade show text-center" role="alert">
             <p>Nyomtatásra előkészített képet készíthetünk itt katolikus templomokból és azok miserendjéből. Az elkészült posztert a térkép bal felső részén található letöltés gombra kattintva lehet többféle méretben letölteni, vagy a mellette lévő gombbal a vágólapra másolni.</p>
             <p>Ez az oldal a <a href="https://szentjozsef.jezsuita.hu/szent-jozsef-hackathon/" target="_blank">Szent József Hackathon</a>, azaz keresztény programozói hétvége keretében készült.</p>
@@ -1115,6 +1176,24 @@
             const saturdayEveningContainer = document.getElementById('saturday-evening-container');
             saturdayEveningContainer.style.display = massDateSelect.value === 'sunday' ? 'block' : 'none';
         });
+
+        // Világos/sötét mód kapcsoló – a választást megjegyezzük
+        (function () {
+            const root = document.documentElement;
+            const toggle = document.getElementById('theme-toggle');
+
+            function frissitIkon() {
+                toggle.textContent = root.getAttribute('data-bs-theme') === 'dark' ? '☀️' : '🌙';
+            }
+            frissitIkon();
+
+            toggle.addEventListener('click', function () {
+                const kovetkezo = root.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';
+                root.setAttribute('data-bs-theme', kovetkezo);
+                try { localStorage.setItem('theme', kovetkezo); } catch (e) { /* nem menthető */ }
+                frissitIkon();
+            });
+        })();
     </script>
 </body>
 
