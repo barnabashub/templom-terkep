@@ -657,8 +657,8 @@
                     // Betöltés jelzése
                     document.getElementById('loading').style.display = 'block';
 
-                    // A keresett hely koordinátáinak lekérése (bármilyen OSM-találat)
-                    const locationResponse = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(settlement)}`);
+                    // A keresett hely koordinátáinak lekérése (település, cím vagy POI, Magyarországon belül)
+                    const locationResponse = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(settlement)},Hungary`);
                     const locationData = await locationResponse.json();
 
                     if (locationData && locationData.length > 0) {
