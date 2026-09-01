@@ -206,8 +206,9 @@
                                         min="1" max="1000" value="100">
                                 </div>
                             </div>
-                            <div class="col-md-12 d-flex justify-content-center">
+                            <div class="col-md-12 d-flex justify-content-center gap-2 flex-wrap">
                                 <button id="search-btn" class="btn btn-primary mb-3">Keresés</button>
+                                <button id="locate-btn" class="btn btn-outline-primary mb-3">📍 Misék körülöttem</button>
                             </div>
                         </div>
                         <div id="loading" class="text-center">
@@ -449,6 +450,9 @@
         // Templomok marker csoportja (törléshez)
         let churchMarkers = L.layerGroup().addTo(map);
 
+        // A felhasználó saját helyzetének jelölője (helymeghatározás gomb)
+        let userPositionMarker = null;
+
         // Eltároljuk a templomok adatait, hogy szűrni tudjunk közöttük
         let allChurches = [];
         let visibleChurchIds = new Set();
@@ -644,152 +648,204 @@
         });
 
 
-        // Eseménykezelő a keresés gombhoz
-        document.getElementById('search-btn').addEventListener('click', async function () {
-            const settlement = document.getElementById('settlement').value;
+        // A megadott pont körüli templomok és miserendek lekérése, majd megjelenítése.
+        // Ezt hívja a szöveges keresés és a „Misék körülöttem" gomb is.
+        async function searchChurchesAround(lat, lon, label) {
             const distance = document.getElementById('distance').value;
             const massDate = document.getElementById('mass-date').value;
             const customDate = document.getElementById('custom-date').value;
             const churchLimit = document.getElementById('church-limit').value;
 
-            if (settlement) {
-                try {
-                    // Betöltés jelzése
-                    document.getElementById('loading').style.display = 'block';
+            try {
+                // Betöltés jelzése
+                document.getElementById('loading').style.display = 'block';
 
-                    // A keresett hely koordinátáinak lekérése (település, cím vagy POI, Magyarországon belül)
-                    const locationResponse = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(settlement)},Hungary`);
-                    const locationData = await locationResponse.json();
+                // Térkép középpontjának áthelyezése
+                map.setView([lat, lon], 12);
 
-                    if (locationData && locationData.length > 0) {
-                        const lat = parseFloat(locationData[0].lat);
-                        const lon = parseFloat(locationData[0].lon);
+                let churches = [];
+                document.getElementById('eloestileiras').style.display = 'none';
 
-                        // Térkép középpontjának áthelyezése
-                        map.setView([lat, lon], 12);
+                // Vasárnapi misék előestével opció kezelése
+                const includeSaturdayEvening = document.getElementById('include-saturday-evening').checked;
 
-                        let churches = [];
-                        document.getElementById('eloestileiras').style.display = 'none';
-
-                        // Vasárnapi misék előestével opció kezelése
-                        const includeSaturdayEvening = document.getElementById('include-saturday-evening').checked;
-
-                        // Mise időpontjának beállítása a kiválasztott értékre
-                        let whenMass = 'sunday';
-                        if (massDate === 'custom' && customDate) {
-                            whenMass = customDate;
-                        } else {
-                            whenMass = massDate;
-                        }
-
-                        // Templomok lekérése a miserend.hu API-tól
-                        churches = await getChurches(lat, lon, distance, whenMass, parseInt(churchLimit));
-
-                        // Ha vasárnap + előesti, akkor szombati misék is kellenek
-                        if (massDate === 'sunday' && includeSaturdayEvening) {
-                            // Lekérjük a szombati miséket is
-                            const saturdayChurches = await getChurches(lat, lon, distance, 'saturday', parseInt(churchLimit));
-                            // Az összes templom listához hozzáadjuk azokat a templomokat és miséket, amik még nem szerepelnek benne
-                            saturdayChurches.forEach(saturdayChurch => {
-                                // Keressük a templomot a vasárnapi listában
-                                const existingChurchIndex = churches.findIndex(c => c.id === saturdayChurch.id);
-
-                                if (existingChurchIndex !== -1) {
-                                    // A templom már szerepel, csak az előesti miséket adjuk hozzá
-                                    if (saturdayChurch.misek && saturdayChurch.misek.length > 0) {
-                                        // Szűrjük az előesti miséket (17:00 utániak)
-                                        const eveningMasses = saturdayChurch.misek.filter(mass => {
-                                            const idopontSzoveg = mass.idopont || '';
-                                            // Időpont formátuma: "2025-05-17 17:30:00"
-                                            const timeMatch = idopontSzoveg.match(/\d{2}:\d{2}:\d{2}$/);
-                                            if (timeMatch) {
-                                                const time = timeMatch[0];
-                                                // Ellenőrizzük, hogy 17:00 utáni-e
-                                                return time >= "17:00:00";
-                                            }
-                                            return false;
-                                        });
-
-                                        // Jelöljük az előesti miséket "ee: hh:mm" formátumban (kettőspont nélkül)
-                                        eveningMasses.forEach(mass => {
-                                            // Időpont formátuma: "2025-05-17 17:30:00"
-                                            let idopontSzoveg = mass.idopont || '';
-                                            idopontSzoveg = "ee: " + idopontSzoveg.split(' ')[1].split(':').slice(0, 2).join(':');
-                                            mass.idopont = idopontSzoveg;
-                                            document.getElementById('eloestileiras').style.display = 'block';
-                                        });
-
-                                        // Hozzáadjuk a szűrt előesti miséket a vasárnapi misékhez
-                                        churches[existingChurchIndex].misek = [
-                                            ...churches[existingChurchIndex].misek,
-                                            ...eveningMasses
-                                        ];
-                                    }
-                                } else {
-                                    // A templom még nem szerepel, de csak akkor adjuk hozzá, ha van előesti miséje
-                                    if (saturdayChurch.misek && saturdayChurch.misek.length > 0) {
-                                        // Szűrjük az előesti miséket (17:00 utániak)
-                                        saturdayChurch.misek = saturdayChurch.misek.filter(mass => {
-                                            const idopontSzoveg = mass.idopont || '';
-                                            // Időpont formátuma: "2025-05-17 17:30:00"
-                                            const timeMatch = idopontSzoveg.match(/\d{2}:\d{2}:\d{2}$/);
-                                            if (timeMatch) {
-                                                const time = timeMatch[0];
-                                                // Ellenőrizzük, hogy 17:00 utáni-e
-                                                return time >= "17:00:00";
-                                            }
-                                            return false;
-                                        });
-
-                                        // Jelöljük az előesti miséket "ee" prefixszel
-                                        saturdayChurch.misek.forEach(mass => {
-                                            // Időpont formátuma: "2025-05-17 17:30:00"
-                                            const idopontSzoveg = mass.idopont || '';
-                                            // Módosítjuk az időpontot, hogy tartalmazzon ee jelzést
-                                            mass.idopont = "ee: " + idopontSzoveg.split(' ')[1].split(':').slice(0, 2).join(':');
-                                        });
-
-                                        // Ha van előesti mise, hozzáadjuk a templomot a listához
-                                        if (saturdayChurch.misek.length > 0) {
-                                            churches.push(saturdayChurch);
-                                            document.getElementById('eloestileiras').style.display = 'block';
-                                        }
-                                    }
-                                }
-                            });
-                        }
-
-                        // Templomok megjelenítése a térképen
-                        displayChurches(churches);
-                        let massTime = document.getElementById('mass-date').options[document.getElementById('mass-date').selectedIndex].text;
-                        if (massTime == "Egyedi dátum...") {
-                            massTime = customDate.replaceAll('-', '.');
-                        } else if (massTime == "Ma") {
-                            const today = new Date();
-                            const year = today.getFullYear();
-                            const month = String(today.getMonth() + 1).padStart(2, '0');
-                            const day = String(today.getDate()).padStart(2, '0');
-                            massTime = `${year}-${month}-${day}`;
-                        }
-                        // A keresett hely kiírt neve (az OSM találat rövid neve, ha van)
-                        lastSearchLabel = (locationData[0].display_name || settlement).split(',')[0].trim();
-                        document.getElementById('varosNap').innerText = `${lastSearchLabel} - ${massTime}`;
-                        updateMiserendBoxVisibility();
-                    } else {
-                        alert('A megadott hely nem található!');
-                    }
-                } catch (error) {
-                    console.error('Hiba történt:', error);
-                    alert('Hiba történt a keresés során: ' + error.message);
-                } finally {
-                    // Betöltés jelzésének elrejtése
-                    document.getElementById('loading').style.display = 'none';
+                // Mise időpontjának beállítása a kiválasztott értékre
+                let whenMass = 'sunday';
+                if (massDate === 'custom' && customDate) {
+                    whenMass = customDate;
+                } else {
+                    whenMass = massDate;
                 }
-            } else {
+
+                // Templomok lekérése a miserend.hu API-tól
+                churches = await getChurches(lat, lon, distance, whenMass, parseInt(churchLimit));
+
+                // Ha vasárnap + előesti, akkor szombati misék is kellenek
+                if (massDate === 'sunday' && includeSaturdayEvening) {
+                    // Lekérjük a szombati miséket is
+                    const saturdayChurches = await getChurches(lat, lon, distance, 'saturday', parseInt(churchLimit));
+                    // Az összes templom listához hozzáadjuk azokat a templomokat és miséket, amik még nem szerepelnek benne
+                    saturdayChurches.forEach(saturdayChurch => {
+                        // Keressük a templomot a vasárnapi listában
+                        const existingChurchIndex = churches.findIndex(c => c.id === saturdayChurch.id);
+
+                        if (existingChurchIndex !== -1) {
+                            // A templom már szerepel, csak az előesti miséket adjuk hozzá
+                            if (saturdayChurch.misek && saturdayChurch.misek.length > 0) {
+                                // Szűrjük az előesti miséket (17:00 utániak)
+                                const eveningMasses = saturdayChurch.misek.filter(mass => {
+                                    const idopontSzoveg = mass.idopont || '';
+                                    // Időpont formátuma: "2025-05-17 17:30:00"
+                                    const timeMatch = idopontSzoveg.match(/\d{2}:\d{2}:\d{2}$/);
+                                    if (timeMatch) {
+                                        const time = timeMatch[0];
+                                        // Ellenőrizzük, hogy 17:00 utáni-e
+                                        return time >= "17:00:00";
+                                    }
+                                    return false;
+                                });
+
+                                // Jelöljük az előesti miséket "ee: hh:mm" formátumban (kettőspont nélkül)
+                                eveningMasses.forEach(mass => {
+                                    // Időpont formátuma: "2025-05-17 17:30:00"
+                                    let idopontSzoveg = mass.idopont || '';
+                                    idopontSzoveg = "ee: " + idopontSzoveg.split(' ')[1].split(':').slice(0, 2).join(':');
+                                    mass.idopont = idopontSzoveg;
+                                    document.getElementById('eloestileiras').style.display = 'block';
+                                });
+
+                                // Hozzáadjuk a szűrt előesti miséket a vasárnapi misékhez
+                                churches[existingChurchIndex].misek = [
+                                    ...churches[existingChurchIndex].misek,
+                                    ...eveningMasses
+                                ];
+                            }
+                        } else {
+                            // A templom még nem szerepel, de csak akkor adjuk hozzá, ha van előesti miséje
+                            if (saturdayChurch.misek && saturdayChurch.misek.length > 0) {
+                                // Szűrjük az előesti miséket (17:00 utániak)
+                                saturdayChurch.misek = saturdayChurch.misek.filter(mass => {
+                                    const idopontSzoveg = mass.idopont || '';
+                                    // Időpont formátuma: "2025-05-17 17:30:00"
+                                    const timeMatch = idopontSzoveg.match(/\d{2}:\d{2}:\d{2}$/);
+                                    if (timeMatch) {
+                                        const time = timeMatch[0];
+                                        // Ellenőrizzük, hogy 17:00 utáni-e
+                                        return time >= "17:00:00";
+                                    }
+                                    return false;
+                                });
+
+                                // Jelöljük az előesti miséket "ee" prefixszel
+                                saturdayChurch.misek.forEach(mass => {
+                                    // Időpont formátuma: "2025-05-17 17:30:00"
+                                    const idopontSzoveg = mass.idopont || '';
+                                    // Módosítjuk az időpontot, hogy tartalmazzon ee jelzést
+                                    mass.idopont = "ee: " + idopontSzoveg.split(' ')[1].split(':').slice(0, 2).join(':');
+                                });
+
+                                // Ha van előesti mise, hozzáadjuk a templomot a listához
+                                if (saturdayChurch.misek.length > 0) {
+                                    churches.push(saturdayChurch);
+                                    document.getElementById('eloestileiras').style.display = 'block';
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // Templomok megjelenítése a térképen
+                displayChurches(churches);
+                let massTime = document.getElementById('mass-date').options[document.getElementById('mass-date').selectedIndex].text;
+                if (massTime == "Egyedi dátum...") {
+                    massTime = customDate.replaceAll('-', '.');
+                } else if (massTime == "Ma") {
+                    const today = new Date();
+                    const year = today.getFullYear();
+                    const month = String(today.getMonth() + 1).padStart(2, '0');
+                    const day = String(today.getDate()).padStart(2, '0');
+                    massTime = `${year}-${month}-${day}`;
+                }
+
+                // A keresett hely kiírt neve
+                lastSearchLabel = label;
+                document.getElementById('varosNap').innerText = `${label} - ${massTime}`;
+                updateMiserendBoxVisibility();
+            } catch (error) {
+                console.error('Hiba történt:', error);
+                alert('Hiba történt a keresés során: ' + error.message);
+            } finally {
+                // Betöltés jelzésének elrejtése
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        // Eseménykezelő a keresés gombhoz (szöveges hely)
+        document.getElementById('search-btn').addEventListener('click', async function () {
+            const settlement = document.getElementById('settlement').value;
+            if (!settlement) {
                 alert('Kérem adja meg a keresett helyet!');
+                return;
+            }
+            // Új szöveges kereséskor a korábbi saját-helyzet jelölő törlése
+            if (userPositionMarker) {
+                map.removeLayer(userPositionMarker);
+                userPositionMarker = null;
+            }
+            try {
+                document.getElementById('loading').style.display = 'block';
+                // A keresett hely koordinátáinak lekérése (település, cím vagy POI, Magyarországon belül)
+                const locationResponse = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(settlement)},Hungary`);
+                const locationData = await locationResponse.json();
+
+                if (locationData && locationData.length > 0) {
+                    const lat = parseFloat(locationData[0].lat);
+                    const lon = parseFloat(locationData[0].lon);
+                    const label = (locationData[0].display_name || settlement).split(',')[0].trim();
+                    await searchChurchesAround(lat, lon, label);
+                } else {
+                    alert('A megadott hely nem található!');
+                }
+            } catch (error) {
+                console.error('Hiba történt:', error);
+                alert('Hiba történt a keresés során: ' + error.message);
+            } finally {
+                document.getElementById('loading').style.display = 'none';
             }
         });
 
+        // „Misék körülöttem" – a felhasználó helyzete körüli misék listázása
+        document.getElementById('locate-btn').addEventListener('click', function () {
+            if (!navigator.geolocation) {
+                alert('A böngésző nem támogatja a helymeghatározást.');
+                return;
+            }
+            document.getElementById('loading').style.display = 'block';
+            navigator.geolocation.getCurrentPosition(
+                async function (position) {
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+
+                    // A felhasználó helyzetének jelölése a térképen
+                    if (userPositionMarker) {
+                        map.removeLayer(userPositionMarker);
+                    }
+                    userPositionMarker = L.circleMarker([lat, lon], {
+                        radius: 8,
+                        color: '#1d6fe0',
+                        fillColor: '#1d6fe0',
+                        fillOpacity: 0.9
+                    }).addTo(map).bindPopup('Az Ön helyzete');
+
+                    await searchChurchesAround(lat, lon, 'Saját helyzetem');
+                },
+                function (error) {
+                    document.getElementById('loading').style.display = 'none';
+                    alert('Nem sikerült a helymeghatározás: ' + error.message);
+                },
+                { enableHighAccuracy: true, timeout: 10000 }
+            );
+        });
         // Enter billentyűre is induljon a keresés a település mezőből
         document.getElementById('settlement').addEventListener('keydown', function (e) {
             if (e.key === 'Enter') {
