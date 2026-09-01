@@ -93,6 +93,44 @@
             line-height: 18px;
             color: #555;
         }
+
+        h1 {
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            color: #2c3e50;
+        }
+
+        .card {
+            border: none;
+            border-radius: 12px;
+        }
+
+        #search-btn {
+            padding-left: 2rem;
+            padding-right: 2rem;
+            font-weight: 600;
+        }
+
+        /* Rétegváltó vezérlő letisztultabb megjelenése */
+        .leaflet-control-layers {
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+
+        .leaflet-control-layers-expanded {
+            padding: 8px 12px 8px 8px;
+            font: 13px/1.6 Arial, Helvetica, sans-serif;
+        }
+
+        .info.title {
+            min-width: 180px;
+        }
+
+        #templomSzam {
+            color: #2c3e50;
+            font-weight: 600;
+            font-size: 0.9em;
+        }
     </style>
 </head>
 
@@ -100,7 +138,7 @@
     <div class="container">
         <h1 class="text-center mb-4">Templom Térkép készítő</h1>
         <div class="alert alert-info alert-dismissible fade show text-center" role="alert">
-            <p></p>Nyomtatásra előkészített képet készíthetünk itt katolikus templomokból és azok miserendjéből. Az elkészült posztert a térkép bal felső részént található letöltés gombra kattintva lehet többféle méretben letölteni.</p>
+            <p>Nyomtatásra előkészített képet készíthetünk itt katolikus templomokból és azok miserendjéből. Az elkészült posztert a térkép bal felső részén található letöltés gombra kattintva lehet többféle méretben letölteni.</p>
             <p>Ez az oldal a <a href="https://szentjozsef.jezsuita.hu/szent-jozsef-hackathon/" target="_blank">Szent József Hackathon</a>, azaz keresztény programozói hétvége keretében készült.</p>
             Ha hibát talál, vagy javaslata van, <a href="https://github.com/szentjozsefhackathon/templom-terkep/issues" target="_blank" class="alert-link">itt küldheti el nekünk</a>.
             
@@ -215,26 +253,69 @@
         // Térkép inicializálása (Magyarország középpontjával)
         const map = L.map('map').setView([47.162494, 19.503304], 7);
 
+        // Alaptérkép rétegek – mindegyik API-kulcs nélkül, ingyenesen elérhető.
+        // A crossOrigin beállítás kell ahhoz, hogy a nyomtatás/letöltés is működjön.
+        const osmStandard = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            crossOrigin: true,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> közreműködők'
+        });
+
+        const osmHumanitarian = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            crossOrigin: true,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> közreműködők | Humanitárius stílus: <a href="https://www.hotosm.org/">HOT</a>'
+        });
+
+        const openTopo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+            maxZoom: 17,
+            crossOrigin: true,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> közreműködők | Domborzat: <a href="https://opentopomap.org/">OpenTopoMap</a> (CC-BY-SA)'
+        });
+
+        const esriSatellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            maxZoom: 19,
+            crossOrigin: true,
+            attribution: 'Műholdkép: <a href="https://www.esri.com/">Esri</a>, Maxar, Earthstar Geographics'
+        });
+
+        // Alapértelmezett réteg: OpenStreetMap
+        osmStandard.addTo(map);
+
+        // Aktuálisan aktív alapréteg nyilvántartása (nyomtatáshoz)
+        let activeBaseLayer = osmStandard;
 
         var printer = L.easyPrint({
             sizeModes: ['Current', 'A4Portrait', 'A4Landscape'],
             filename: 'templomTerkep',
             exportOnly: true,
             hideControlContainer: true,
+            tileLayer: activeBaseLayer
+        }).addTo(map);
 
-        }).addTo(map);
-        // CartoDB Voyager alaptérkép hozzáadása
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-            maxZoom: 19,
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            referrerPolicy: 'strict-origin-when-cross-origin'
-        }).addTo(map);
+        // Rétegváltó vezérlő – itt lehet másik alaptérképre váltani
+        const baseMaps = {
+            'Térkép (OpenStreetMap)': osmStandard,
+            'Domborzat': openTopo,
+            'Humanitárius': osmHumanitarian,
+            'Műholdkép': esriSatellite
+        };
+        L.control.layers(baseMaps, null, { position: 'topright', collapsed: false }).addTo(map);
+
+        // Nyomtatáskor mindig az éppen látható réteget várjuk meg
+        map.on('baselayerchange', function (e) {
+            activeBaseLayer = e.layer;
+            printer.options.tileLayer = e.layer;
+        });
+
+        // Lépték megjelenítése (csak metrikus)
+        L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
 
         const title = L.control({ position: 'topright' });
         title.onAdd = function (map) {
 
             const div = L.DomUtil.create('div', 'info title');
-            div.innerHTML = `<h4>Miserend</h4><h5 id="varosNap"></h5><p id="eloestileiras" style="display: none;">ee: előesti szentmise szombaton</p>`;
+            div.innerHTML = `<h4>Miserend</h4><h5 id="varosNap"></h5><p id="templomSzam" style="margin: 0 0 4px;"></p><p id="eloestileiras" style="display: none;">ee: előesti szentmise szombaton</p>`;
             return div;
 
         };
@@ -551,8 +632,8 @@
                                         saturdayChurch.misek.forEach(mass => {
                                             // Időpont formátuma: "2025-05-17 17:30:00"
                                             const idopontSzoveg = mass.idopont || '';
-                                            // Módosítjuk az időpontot, hogy tartalmazzon ee jelzést (kettőspont nélkül)
-                                            mass.idopont = idopontSzoveg.split(' ')[1].split(':').slice(0, 2).join(':');
+                                            // Módosítjuk az időpontot, hogy tartalmazzon ee jelzést
+                                            mass.idopont = "ee: " + idopontSzoveg.split(' ')[1].split(':').slice(0, 2).join(':');
                                         });
 
                                         // Ha van előesti mise, hozzáadjuk a templomot a listához
@@ -593,6 +674,14 @@
             }
         });
 
+        // Enter billentyűre is induljon a keresés a település mezőből
+        document.getElementById('settlement').addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                document.getElementById('search-btn').click();
+            }
+        });
+
         // Markerek frissítése a láthatóság alapján
         function updateChurchMarkers() {
             // Korábbi markerek törlése
@@ -617,6 +706,14 @@
 
             // Meghatározzuk a határpont templomokat (legészakibb, legdélibb, legkeletibb, legnyugatibb)
             const extremeChurches = findExtremeChurches(visibleChurches);
+
+            // Frissítjük a látható templomok számát a Miserend dobozban
+            const templomSzamElem = document.getElementById('templomSzam');
+            if (templomSzamElem) {
+                templomSzamElem.textContent = visibleChurches.length > 0
+                    ? `${visibleChurches.length} templom a térképen`
+                    : '';
+            }
 
             // Hozzáadjuk a markereket a térképhez
             visibleChurches.forEach(church => {
