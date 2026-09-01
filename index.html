@@ -16,6 +16,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <script type="text/javascript" src="map-easyPrint/bundle.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html-to-image/1.11.11/html-to-image.js"></script>
 
     <style>
         #map {
@@ -131,6 +132,15 @@
             font-weight: 600;
             font-size: 0.9em;
         }
+
+        /* Vágólapra másolás gomb – a Leaflet gombokhoz igazítva */
+        .leaflet-control-copy-button {
+            font-size: 18px;
+            font-weight: 700;
+            text-align: center;
+            line-height: 30px;
+            cursor: pointer;
+        }
     </style>
 </head>
 
@@ -138,7 +148,7 @@
     <div class="container">
         <h1 class="text-center mb-4">Templom Térkép készítő</h1>
         <div class="alert alert-info alert-dismissible fade show text-center" role="alert">
-            <p>Nyomtatásra előkészített képet készíthetünk itt katolikus templomokból és azok miserendjéből. Az elkészült posztert a térkép bal felső részén található letöltés gombra kattintva lehet többféle méretben letölteni.</p>
+            <p>Nyomtatásra előkészített képet készíthetünk itt katolikus templomokból és azok miserendjéből. Az elkészült posztert a térkép bal felső részén található letöltés gombra kattintva lehet többféle méretben letölteni, vagy a mellette lévő gombbal a vágólapra másolni.</p>
             <p>Ez az oldal a <a href="https://szentjozsef.jezsuita.hu/szent-jozsef-hackathon/" target="_blank">Szent József Hackathon</a>, azaz keresztény programozói hétvége keretében készült.</p>
             Ha hibát talál, vagy javaslata van, <a href="https://github.com/szentjozsefhackathon/templom-terkep/issues" target="_blank" class="alert-link">itt küldheti el nekünk</a>.
             
@@ -151,9 +161,9 @@
                         <div class="row">
                             <div class="col-md-6">
                                 <div class="mb-3">
-                                    <label for="settlement" class="form-label">Település neve:</label>
+                                    <label for="settlement" class="form-label">Hely (település, cím vagy nevezetesség):</label>
                                     <input type="text" class="form-control" id="settlement"
-                                        placeholder="Adja meg a település nevét">
+                                        placeholder="Pl. Szeged, Dóm tér vagy Bazilika Budapest">
                                 </div>
                             </div>
                             <div class="col-md-3">
@@ -219,6 +229,12 @@
                                         <input class="form-check-input" type="checkbox" id="show-mass-schedule" checked>
                                         <label class="form-check-label" for="show-mass-schedule">
                                             Miserend megjelenítése a térképen
+                                        </label>
+                                    </div>
+                                    <div class="form-check mt-2">
+                                        <input class="form-check-input" type="checkbox" id="include-title-on-image">
+                                        <label class="form-check-label" for="include-title-on-image">
+                                            A „Miserend” felirat is látszódjon a letöltött/másolt képen
                                         </label>
                                     </div>
                                 </div>
@@ -300,7 +316,7 @@
             'Humanitárius': osmHumanitarian,
             'Műholdkép': esriSatellite
         };
-        L.control.layers(baseMaps, null, { position: 'topright', collapsed: false }).addTo(map);
+        const layersControl = L.control.layers(baseMaps, null, { position: 'topright', collapsed: false }).addTo(map);
 
         // Nyomtatáskor mindig az éppen látható réteget várjuk meg
         map.on('baselayerchange', function (e) {
@@ -321,6 +337,103 @@
         };
 
         title.addTo(map);
+
+        // Az utoljára keresett hely neve – a fájlnévhez és a felirathoz
+        let lastSearchLabel = '';
+
+        // A Miserend doboz csak akkor látszódjon, ha van benne érdemi tartalom
+        function updateMiserendBoxVisibility() {
+            const container = title.getContainer();
+            if (!container) return;
+            const varosNap = (document.getElementById('varosNap').textContent || '').trim();
+            container.style.display = varosNap ? '' : 'none';
+        }
+        updateMiserendBoxVisibility();
+
+        // Vágólapra másolás gomb a térképen (a letöltés gomb mellett)
+        const copyControl = L.control({ position: 'topleft' });
+        copyControl.onAdd = function () {
+            const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+            const link = L.DomUtil.create('a', 'leaflet-control-copy-button', container);
+            link.href = '#';
+            link.title = 'Térkép másolása a vágólapra';
+            link.setAttribute('role', 'button');
+            link.innerHTML = '⧉';
+            L.DomEvent.on(link, 'click', L.DomEvent.stop);
+            L.DomEvent.on(link, 'click', copyMapToClipboard);
+            return container;
+        };
+        copyControl.addTo(map);
+
+        // Fájlnév a letöltéshez: miserend_hely_időbélyeg
+        function buildExportFilename() {
+            const now = new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+            const helySzeletek = (lastSearchLabel || 'terkep')
+                .trim()
+                .toLowerCase()
+                .replace(/\s+/g, '_')
+                .replace(/[^a-z0-9áéíóöőúüű_-]/g, '');
+            const hely = helySzeletek || 'terkep';
+            return `miserend_${hely}_${timestamp}`;
+        }
+
+        // Exportáláskor (letöltés és másolás) elrejtendő vezérlők.
+        // A bal felső sarok a nagyítás, a nyomtatás és a másolás gombokat tartalmazza,
+        // a rétegváltó a jobb felső sarokban van – ezek egyike se kerüljön a képre.
+        function hideForExport() {
+            const topLeft = document.querySelector('#map .leaflet-top.leaflet-left');
+            const layersEl = layersControl.getContainer();
+            const titleEl = title.getContainer();
+            if (topLeft) topLeft.style.visibility = 'hidden';
+            if (layersEl) layersEl.style.visibility = 'hidden';
+            // A Miserend felirat csak akkor kerüljön a képre, ha a felhasználó kéri
+            if (titleEl && !document.getElementById('include-title-on-image').checked) {
+                titleEl.style.visibility = 'hidden';
+            }
+        }
+
+        // Az export utáni visszaállítás
+        function restoreAfterExport() {
+            const topLeft = document.querySelector('#map .leaflet-top.leaflet-left');
+            const layersEl = layersControl.getContainer();
+            const titleEl = title.getContainer();
+            if (topLeft) topLeft.style.visibility = '';
+            if (layersEl) layersEl.style.visibility = '';
+            if (titleEl) titleEl.style.visibility = '';
+            updateMiserendBoxVisibility();
+        }
+
+        // Letöltés (easyPrint): dinamikus fájlnév + vezérlők elrejtése a képről
+        map.on('easyPrint-start', function () {
+            printer.options.filename = buildExportFilename();
+            hideForExport();
+        });
+        map.on('easyPrint-finished', restoreAfterExport);
+
+        // A térkép aktuális nézetének vágólapra másolása – a letöltéssel azonos paraméterekkel
+        async function copyMapToClipboard() {
+            if (!navigator.clipboard || !window.ClipboardItem) {
+                alert('A böngésző nem támogatja a vágólapra másolást. Használja a letöltés gombot.');
+                return;
+            }
+            const mapContainer = document.getElementById('map');
+            try {
+                hideForExport();
+                const blob = await htmlToImage.toBlob(mapContainer, { pixelRatio: 2, cacheBust: true });
+                await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+                const link = copyControl.getContainer().querySelector('a');
+                const eredeti = link.innerHTML;
+                link.innerHTML = '✓';
+                setTimeout(() => { link.innerHTML = eredeti; }, 1200);
+            } catch (error) {
+                console.error('Vágólapra másolási hiba:', error);
+                alert('Nem sikerült a vágólapra másolás: ' + error.message);
+            } finally {
+                restoreAfterExport();
+            }
+        }
 
         const logo = L.control({ position: 'bottomleft' });
         logo.onAdd = function (map) {
@@ -544,8 +657,8 @@
                     // Betöltés jelzése
                     document.getElementById('loading').style.display = 'block';
 
-                    // Település koordinátáinak lekérése
-                    const locationResponse = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(settlement)},Hungary`);
+                    // A keresett hely koordinátáinak lekérése (bármilyen OSM-találat)
+                    const locationResponse = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(settlement)}`);
                     const locationData = await locationResponse.json();
 
                     if (locationData && locationData.length > 0) {
@@ -658,9 +771,12 @@
                             const day = String(today.getDate()).padStart(2, '0');
                             massTime = `${year}-${month}-${day}`;
                         }
-                        document.getElementById('varosNap').innerText = `${settlement} - ${massTime}`;
+                        // A keresett hely kiírt neve (az OSM találat rövid neve, ha van)
+                        lastSearchLabel = (locationData[0].display_name || settlement).split(',')[0].trim();
+                        document.getElementById('varosNap').innerText = `${lastSearchLabel} - ${massTime}`;
+                        updateMiserendBoxVisibility();
                     } else {
-                        alert('A település nem található!');
+                        alert('A megadott hely nem található!');
                     }
                 } catch (error) {
                     console.error('Hiba történt:', error);
@@ -670,7 +786,7 @@
                     document.getElementById('loading').style.display = 'none';
                 }
             } else {
-                alert('Kérem adja meg a település nevét!');
+                alert('Kérem adja meg a keresett helyet!');
             }
         });
 
